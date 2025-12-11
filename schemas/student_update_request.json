@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StudentUpdateRequest",
+  "type": "object",
+  "properties": {
+    "student_id": { "type": "string", "minLength": 1 },
+    "full_name": { "type": "string", "minLength": 1 },
+    "course": { "type": "string", "minLength": 1 },
+    "year_level": { "type": "string", "minLength": 1 },
+    "rfid_uid": { "type": ["string","null"] }
+  },
+  "required": ["student_id", "full_name", "course", "year_level"],
+  "additionalProperties": false
+}

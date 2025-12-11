@@ -1,0 +1,469 @@
+student_api/schemas/
+student_create_request.json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StudentCreateRequest",
+  "type": "object",
+  "properties": {
+    "student_id": { "type": "string", "minLength": 1 },
+    "full_name": { "type": "string", "minLength": 1 },
+    "course": { "type": "string", "minLength": 1 },
+    "year_level": { "type": "string", "minLength": 1 },
+    "rfid_uid": { "type": ["string","null"] }
+  },
+  "required": ["student_id", "full_name", "course", "year_level"],
+  "additionalProperties": false
+}
+
+student_list_reponse.json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StudentListResponse",
+  "type": "object",
+  "properties": {
+    "status": { "type": "string" },
+    "data": {
+      "type": "array",
+      "items": { "$ref": "student_response.json" }
+    }
+  },
+  "required": ["status", "data"],
+  "additionalProperties": false
+}
+
+student_response.json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StudentResponse",
+  "type": "object",
+  "properties": {
+    "id": { "type": "integer" },
+    "student_id": { "type": "string" },
+    "full_name": { "type": "string" },
+    "course": { "type": "string" },
+    "year_level": { "type": "string" },
+    "rfid_uid": { "type": ["string","null"] },
+    "created_at": { "type": "string" }
+  },
+  "required": ["id", "student_id", "full_name", "course", "year_level", "created_at"],
+  "additionalProperties": false
+}
+
+student_update_request.json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StudentUpdateRequest",
+  "type": "object",
+  "properties": {
+    "student_id": { "type": "string", "minLength": 1 },
+    "full_name": { "type": "string", "minLength": 1 },
+    "course": { "type": "string", "minLength": 1 },
+    "year_level": { "type": "string", "minLength": 1 },
+    "rfid_uid": { "type": ["string","null"] }
+  },
+  "required": ["student_id", "full_name", "course", "year_level"],
+  "additionalProperties": false
+}
+
+student_api/students/
+create.php
+<?php
+include __DIR__ . "/../../config/db_connection.php";
+include __DIR__ . "/../utils/response.php";
+include __DIR__ . "/../utils/json_validator.php";
+
+    $raw = file_get_contents("php://input");
+    $input = json_decode($raw, true);
+
+    if (!$input) {
+        send_response(["status"=>"error","message"=>"Invalid JSON"]);
+        exit;
+    }
+
+    //Validate body structure
+    $schema = load_schema("student_create_request.json");
+    list($ok, $errs) = validate_against_schema($input, $schema);
+    if (!$ok) {
+        send_response(["status"=>"error","message"=>"Schema validation failed","errors"=>$errs]);
+        exit;
+    }
+
+    //Prevent duplicate student_id
+    $check1 = $conn->prepare("SELECT id FROM student WHERE student_id = ?");
+    $check1->bind_param("s", $input["student_id"]);
+    $check1->execute();
+    if ($check1->get_result()->num_rows > 0) {
+        send_response(["status"=>"error","message"=>"Student ID already exists"]);
+        exit;
+    }
+
+    //Prevent duplicate RFID
+    if (!empty($input["rfid_uid"])) {
+        $check2 = $conn->prepare("SELECT id FROM student WHERE rfid_uid = ?");
+        $check2->bind_param("s", $input["rfid_uid"]);
+        $check2->execute();
+        if ($check2->get_result()->num_rows > 0) {
+            send_response(["status"=>"error","message"=>"RFID UID already exists"]);
+            exit;
+        }
+    }
+
+    //Insert new student
+    $stmt = $conn->prepare("
+        INSERT INTO student (student_id, full_name, course, year_level, rfid_uid)
+        VALUES (?, ?, ?, ?, ?)
+    ");
+    $stmt->bind_param(
+        "sssss",
+        $input["student_id"],
+        $input["full_name"],
+        $input["course"],
+        $input["year_level"],
+        $input["rfid_uid"]
+    );
+
+    if (!$stmt->execute()) {
+        send_response(["status"=>"error","message"=>$conn->error]);
+        exit;
+    }
+
+    //Success response
+    $inserted_id = $conn->insert_id;
+
+    $resData = [
+        "status" => "success",
+        "data" => [
+            "id" => (int)$inserted_id,
+            "student_id" => $input["student_id"],
+            "full_name" => $input["full_name"],
+            "course" => $input["course"],
+            "year_level" => $input["year_level"],
+            "rfid_uid" => $input["rfid_uid"],
+            "created_at" => date("Y-m-d H:i:s")
+        ]
+    ];
+
+    send_response($resData);
+?>
+
+delete.php
+<?php
+include "../../config/db_connection.php";
+include "../utils/response.php";
+
+if (!isset($_GET["id"])) {
+    send_response(["status" => "error", "message" => "Missing ID"]);
+    exit;
+}
+
+$id = intval($_GET["id"]);
+
+// Prepared delete statement
+$stmt = $conn->prepare("DELETE FROM student WHERE id = ?");
+$stmt->bind_param("i", $id);
+$stmt->execute();
+
+// Check if student existed and was deleted
+if ($stmt->affected_rows === 1) {
+    send_response(["status" => "success", "message" => "Student deleted"]);
+} else {
+    // No rows deleted → student does NOT exist
+    send_response([
+        "status" => "error",
+        "message" => "Student not found or already deleted"
+    ]);
+}
+?>
+
+get_all.php
+<?php
+include "../../config/db_connection.php";
+include "../utils/response.php";
+include "../utils/json_validator.php";
+
+// Step 1: Fetch students from DB
+$result = $conn->query("SELECT * FROM student ORDER BY id DESC");
+
+$students = [];
+while ($row = $result->fetch_assoc()) {
+    $students[] = $row;
+}
+
+// Step 2: Validate each student object against schema
+$singleSchema = load_schema("student_response.json");
+
+foreach ($students as &$s) {
+    list($ok, $errs) = validate_against_schema($s, $singleSchema);
+    if (!$ok) {
+        $s["validation_errors"] = $errs; // optional
+    }
+}
+
+// Step 3: Build final response
+$response = [
+    "status" => "success",
+    "data" => $students
+];
+
+// Step 4: Send response once
+send_response($response);
+?>
+
+get_one.php
+<?php
+include "../../config/db_connection.php";
+include "../utils/response.php";
+include "../utils/json_validator.php";
+
+// 1. Validate ID param
+if (!isset($_GET["id"])) {
+    send_response(["status" => "error", "message" => "Missing ID"]);
+    exit;
+}
+
+$id = intval($_GET["id"]);
+
+// 2. Fetch ONE student
+$stmt = $conn->prepare("SELECT * FROM student WHERE id = ?");
+$stmt->bind_param("i", $id);
+$stmt->execute();
+$res = $stmt->get_result();
+
+if ($res->num_rows === 0) {
+    send_response(["status" => "error", "message" => "Student not found"]);
+    exit;
+}
+
+$student = $res->fetch_assoc();
+
+// 3. Validate response with schema
+$schema = load_schema("student_response.json");
+list($ok, $errs) = validate_against_schema($student, $schema);
+
+if (!$ok) {
+    $student["validation_errors"] = $errs; // optional for grading
+}
+
+// 4. Send response
+send_response([
+    "status" => "success",
+    "data" => $student
+]);
+?>
+
+update.php
+<?php
+include __DIR__ . "/../../config/db_connection.php";
+include __DIR__ . "/../utils/response.php";
+include __DIR__ . "/../utils/json_validator.php";
+
+if (!isset($_GET["id"])) {
+    send_response(["status" => "error", "message" => "Missing ID"]);
+    exit;
+}
+
+$id = intval($_GET["id"]);
+
+// Get JSON body
+$raw = file_get_contents("php://input");
+$input = json_decode($raw, true);
+
+if (!$input) {
+    send_response(["status" => "error", "message" => "Invalid JSON"]);
+    exit;
+}
+
+// ---------------------------
+// Validate input schema
+// ---------------------------
+$schema = load_schema("student_update_request.json");
+list($ok, $errs) = validate_against_schema($input, $schema);
+
+if (!$ok) {
+    send_response([
+        "status" => "error",
+        "message" => "Schema validation failed",
+        "errors" => $errs
+    ]);
+    exit;
+}
+
+// ---------------------------
+// Prevent duplicate student_id
+// ---------------------------
+$check1 = $conn->prepare("
+    SELECT id FROM student 
+    WHERE student_id = ? AND id != ?
+");
+$check1->bind_param("si", $input["student_id"], $id);
+$check1->execute();
+$res1 = $check1->get_result();
+
+if ($res1->num_rows > 0) {
+    send_response([
+        "status" => "error",
+        "message" => "Student ID already exists"
+    ]);
+    exit;
+}
+
+// ---------------------------
+// Prevent duplicate RFID UID
+// ---------------------------
+if (!empty($input["rfid_uid"])) {
+    $check2 = $conn->prepare("
+        SELECT id FROM student 
+        WHERE rfid_uid = ? AND id != ?
+    ");
+    $check2->bind_param("si", $input["rfid_uid"], $id);
+    $check2->execute();
+    $res2 = $check2->get_result();
+
+    if ($res2->num_rows > 0) {
+        send_response([
+            "status" => "error",
+            "message" => "RFID UID already exists"
+        ]);
+        exit;
+    }
+}
+
+// ---------------------------
+// Perform update
+// ---------------------------
+$stmt = $conn->prepare("
+    UPDATE student
+    SET student_id=?, full_name=?, course=?, year_level=?, rfid_uid=?
+    WHERE id=?
+");
+
+$stmt->bind_param(
+    "sssssi",
+    $input["student_id"],
+    $input["full_name"],
+    $input["course"],
+    $input["year_level"],
+    $input["rfid_uid"],
+    $id
+);
+
+if ($stmt->execute()) {
+    send_response(["status" => "success", "message" => "Student updated"]);
+} else {
+    send_response(["status" => "error", "message" => $conn->error]);
+}
+?>
+
+students_api/utils/
+json_validator.php
+<?php
+// naive JSON Schema checker for our limited schemas (draft-07 subset)
+// - checks required keys, disallows additionalProperties, checks types (string, integer, array, null)
+// - returns array: [bool $ok, array $errors]
+
+function load_schema($file) {
+    $path = __DIR__ . "/../schemas/" . $file;
+    if (!file_exists($path)) return null;
+    return json_decode(file_get_contents($path), true);
+}
+
+function check_type($value, $expected) {
+    if (is_array($expected)) {
+        foreach ($expected as $t) if (check_type($value, $t)) return true;
+        return false;
+    }
+    if ($expected === "string") return is_string($value);
+    if ($expected === "integer") return is_int($value) || (is_string($value) && ctype_digit($value));
+    if ($expected === "array") return is_array($value);
+    if ($expected === "null") return is_null($value);
+    if ($expected === "number") return is_int($value) || is_float($value) || (is_string($value) && is_numeric($value));
+    if ($expected === "boolean") return is_bool($value);
+    return false;
+}
+
+function validate_against_schema(array $data, array $schema) {
+    $errors = [];
+
+    // additionalProperties
+    $additionalAllowed = $schema['additionalProperties'] ?? true;
+    if ($additionalAllowed === false && isset($schema['properties'])) {
+        foreach ($data as $k => $v) {
+            if (!array_key_exists($k, $schema['properties'])) {
+                $errors[] = "Unexpected property: $k";
+            }
+        }
+    }
+
+    // required
+    $required = $schema['required'] ?? [];
+    foreach ($required as $req) {
+        if (!array_key_exists($req, $data)) {
+            $errors[] = "Missing required property: $req";
+        }
+    }
+
+    // types
+    if (isset($schema['properties'])) {
+        foreach ($schema['properties'] as $key => $prop) {
+            if (!array_key_exists($key, $data)) continue;
+            $expected = $prop['type'] ?? null;
+            $value = $data[$key];
+
+            // handle union types like ["string","null"]
+            if ($expected !== null) {
+                if (!check_type($value, $expected)) {
+                    $errors[] = "Property '$key' must be of type " . (is_array($expected) ? implode("|", $expected) : $expected);
+                }
+            }
+            // minLength basic check
+            if (isset($prop['minLength']) && is_string($value)) {
+                if (strlen($value) < $prop['minLength']) $errors[] = "Property '$key' minLength {$prop['minLength']}";
+            }
+        }
+    }
+
+    return [count($errors) === 0, $errors];
+}
+
+response.php
+<?php
+include __DIR__ . "/xml.php";
+
+function send_response($data) {
+    $accept = $_SERVER["HTTP_ACCEPT"] ?? "application/json";
+
+    // XML response
+    if (strpos($accept, "xml") !== false) {
+        header("Content-Type: application/xml");
+
+        $xml = new SimpleXMLElement("<response/>");
+        array_to_xml($data, $xml);
+
+        echo $xml->asXML();
+        return;
+    }
+
+    // JSON response
+    header("Content-Type: application/json");
+    echo json_encode($data);
+}
+?>
+
+xml.php
+<?php
+
+function array_to_xml($data, &$xml_data) {
+    foreach ($data as $key => $value) {
+        if (is_array($value)) {
+            if (is_numeric($key)) {
+                $key = "item$key"; // XML tag cannot start with number
+            }
+            $subnode = $xml_data->addChild($key);
+            array_to_xml($value, $subnode);
+        } else {
+            $xml_data->addChild("$key", htmlspecialchars("$value"));
+        }
+    }
+}
+
+?>

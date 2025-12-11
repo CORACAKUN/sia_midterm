@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StudentResponse",
+  "type": "object",
+  "properties": {
+    "id": { "type": "integer" },
+    "student_id": { "type": "string" },
+    "full_name": { "type": "string" },
+    "course": { "type": "string" },
+    "year_level": { "type": "string" },
+    "rfid_uid": { "type": ["string","null"] },
+    "created_at": { "type": "string" }
+  },
+  "required": ["id", "student_id", "full_name", "course", "year_level", "created_at"],
+  "additionalProperties": false
+}
